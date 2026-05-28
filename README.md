@@ -1,4 +1,5 @@
-# 👁 Argus Echo
+# Argus Echo
+
 ### Edge AI Anomaly Detection + RAG-Powered Operator Guidance for ICS Security
 
 **Argus detects. Echo explains.**
@@ -13,112 +14,56 @@
 
 ## Overview
 
-Argus Echo was originally scoped as a nuclear power plant intrusion detection system. The core problem: sophisticated state-sponsored actors execute **Replay Attacks** on ICS infrastructure — freezing a sensor's output to broadcast a perfectly normal baseline to the control room while physically sabotaging the machinery in reality. Standard time-series AI fails to catch this because a flatline has near-zero reconstruction error.
+Argus Echo is a domain-agnostic Edge AI diagnostic tool for safety-critical industrial telemetry. It combines:
 
-**The constraint that shaped the architecture:** Nuclear plant SCADA telemetry is classified. No public dataset exists. Rather than abandoning the research, the system was redesigned as a **domain-agnostic Edge AI framework** — mathematically rigorous enough for nuclear-grade ICS security, but deployable against any operator's telemetry.
+- **Argus**, an LSTM autoencoder anomaly detector that learns normal telemetry behavior.
+- **Echo**, a RAG-powered operator guidance layer grounded in ICS security documents.
 
-**For this public deployment**, Argus Echo is trained and validated against the **HAI 22.04 dataset** — a hardware-in-the-loop simulated steam-turbine and pumped-storage hydropower system developed by researchers at the Affiliated Institute of ETRI. It is the most rigorous publicly available ICS security benchmark and serves as a direct proxy for the kind of telemetry found in safety-critical infrastructure.
+The project was designed around a key ICS security problem: replay attacks can freeze or spoof sensor output so the control room sees normal-looking telemetry while the physical system is behaving abnormally. Standard time-series models can miss this because a flatline can have very low reconstruction error.
 
-> A nuclear plant operator would deploy their own instance, train on their SCADA normal-operation data, and get a model specific to their facility. The HAI deployment demonstrates the pipeline on real ICS data — the architecture is identical, only the training data changes.
-
----
-
-## The Core Technical Problem
-
-Standard LSTM Autoencoders detect anomalies by measuring reconstruction error (MSE) between input and predicted sequences. This works for spikes and deviations — but fails catastrophically for Replay Attacks:
-
-```
-Replay Attack → sensor output frozen → perfect flatline
-LSTM-AE sees flatline → reconstructs it perfectly → MSE ≈ 0
-System reports: NO ANOMALY  ← catastrophic failure
-```
-
-This is the **Low-Entropy Blind Spot** — the model inherently trusts perfectly static data.
-
-**Argus solves this mathematically, not by scaling the model:**
-
-```python
-# Before tensor sequence creation, compute rolling variance per sensor
-σ² = (1/N-1) Σ(xᵢ - x̄)²
-
-# When a sensor is spoofed and flatlines:
-# variance → exactly 0.0
-# In a thermodynamic system, 0.0 variance is a physical impossibility
-# The ~3,300 parameter LSTM-AE flags this as a massive anomaly
-```
-
-The computational burden shifts from the deep learning layer to a deterministic feature engineering layer — keeping the model lightweight enough for Edge microprocessor deployment.
+Argus addresses this by adding deterministic rolling variance features before model inference. When a normally dynamic industrial signal becomes suspiciously static, the variance channel helps expose the anomaly.
 
 ---
 
-## Architecture
+## Current App Flow
 
-```
-HAI 22.04 Telemetry (87 sensors → 174 features with variance)
-        ↓
-Argus LSTM-AE Inference
-        ↓
-Anomaly Detected (MAE > 0.13 threshold)
-        ↓
-Structured JSON Anomaly Log {sensor_id, mse_score, variance}
-        ↓
-LangChain RAG Pipeline + FAISS Vector Store (ICS Security Corpus)
-        ↓
-Groq Llama 3.3 70B → Grounded Operator Guidance
-        ↓
-RAGAS Scoring (Faithfulness / Relevancy)
-        ↓
-Argus Echo Unified Dashboard (Streamlit)
+The current project is meant to be used through the Streamlit dashboard.
+
+```bash
+streamlit run app.py
 ```
 
-### RAGAS Faithfulness as an Operational Trust Indicator
+After the app opens:
 
-Every Echo interpretation is automatically scored. The faithfulness score is repurposed from an academic LLM evaluation metric into an **operational safety feature**:
+1. Create an account or log in from the sidebar.
+2. Open the **Train Model** tab.
+3. Upload a **training CSV** containing normal-operation telemetry.
+4. Click **Train Model**.
+5. Argus trains a model for that sensor layout and saves it to the current account.
+6. Open the **Run Diagnostics** tab.
+7. Upload a **testing CSV** containing telemetry to analyze.
+8. Click **Run Diagnostics**.
+9. The diagnosis appears in the dashboard with anomaly scores, plotted sensor traces, logged anomalies, and recent diagnostic history.
 
-| Faithfulness | Confidence | Operator Action |
-|---|---|---|
-| ≥ 0.85 | HIGH | Interpretation grounded in ICS literature — act on it |
-| 0.60–0.85 | MODERATE | Partially inferred — verify before acting |
-| < 0.60 | LOW | Insufficient documentation — escalate to security team immediately |
+The training CSV and testing CSV should have the same sensor layout. If the testing CSV has a different number of numeric telemetry signals, the app will show a shape mismatch and ask you to train a model for that layout.
+
+The model automatically reads the shape of the uploaded CSV. For example, 87 raw HAI sensors become 174 model inputs after Argus adds rolling variance features. No hardcoded sensor names are required.
 
 ---
 
-## Stack
+## Echo Guidance
 
-| Layer | Technology |
-|---|---|
-| Detection Engine | LSTM Autoencoder (TensorFlow/Keras, ~3,300 params) |
-| Feature Engineering | Multivariate Rolling Variance (NumPy/Pandas) |
-| Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
-| Vector Store | FAISS |
-| RAG Orchestration | LangChain |
-| LLM | Groq — Llama 3.3 70B Versatile |
-| LLM Evaluation | RAGAS (faithfulness, answer relevancy, context precision) |
-| Dashboard | Streamlit + Plotly |
+After diagnostics logs an anomaly, open the **Echo Guidance** tab to generate operator guidance.
 
----
+If the Echo knowledge base has not been built yet, click **Build Knowledge Base From data/** inside the app. Echo indexes the ICS security PDFs in `data/` and uses them to ground its explanation.
 
-## Project Structure
+Echo requires a Groq API key. Add it through `.env`:
 
+```bash
+GROQ_API_KEY=your_groq_api_key_here
 ```
-argus_echo/
-├── app.py                    ← Unified Streamlit Application
-├── train_model.py            ← LSTM-AE training script
-├── anomaly_detection_model.keras ← Trained model
-├── requirements.txt          ← Python dependencies
-├── .env                      ← Environment variables
-├── .gitignore                ← Git ignore rules
-│
-├── echo/
-│   ├── __init__.py
-│   ├── ingest.py             ← ICS corpus ingestion → FAISS
-│   ├── rag.py                ← ICS analyst prompt + RAG chain
-│   ├── evaluate.py           ← RAGAS scoring
-│   └── query_builder.py      ← Anomaly JSON → LLM query
-│
-├── data/                     ← ICS security corpus (PDFs)
-└── vectorstore/              ← FAISS index (auto-generated)
-```
+
+You can also paste the key into the Echo Guidance tab during the app session.
 
 ---
 
@@ -127,183 +72,82 @@ argus_echo/
 ### Prerequisites
 
 - Python 3.10+
-- Groq API key — free at [console.groq.com](https://console.groq.com)
-- HAI 22.04 dataset — [icsdataset/hai](https://github.com/icsdataset/hai)
+- Groq API key for Echo guidance
+- Training and testing telemetry CSV files
 
 ### Installation
 
 ```bash
-git clone https://github.com/naurjhanvi/argus-echo
-cd argus_echo
+git clone https://github.com/naurjhanvi/Argus_Echo
+cd Argus_Echo
 
 python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # Linux/Mac
+venv\Scripts\activate
 
 pip install -r requirements.txt
 ```
 
-### Environment
-
-```bash
-# .env
-GROQ_API_KEY=your_groq_api_key_here
-```
-
-### Train on HAI 22.04
-
-Download the HAI 22.04 dataset. Use any normal-operation CSV for training:
-
-```bash
-python train_model.py path/to/hai_normal.csv
-```
-
-This generates `anomaly_detection_model.keras`, `scaler.pkl`, and `model_config.pkl`. The model automatically reads the shape of your CSV — 87 HAI sensors become 174 features (87 raw + 87 variance). No hardcoded sensor names.
-
-### Build Echo Knowledge Base
-
-Add ICS security PDFs to `data/` then:
-
-```bash
-python -c "from echo.ingest import ingest_data_folder; print(ingest_data_folder())"
-```
-
-### Run Locally
+### Start the Dashboard
 
 ```bash
 streamlit run app.py
 ```
 
-The current Streamlit app is multi-user. On first launch, create an account, then either:
+The app stores user accounts, uploaded files, trained models, diagnostic runs, and anomaly history under `ml/` by default.
 
-- train a facility-specific model from a normal-operation CSV in the **Train Model** tab, or
-- import the existing local artifacts if these files are present at the repository root:
-  `anomaly_detection_model.keras`, `scaler.pkl`, and `model_config.pkl`.
+---
 
-User accounts, uploaded training files, model artifacts, diagnostic runs, and anomaly history are stored under `ml/` by default. Override this for production with:
+## Project Structure
 
-```bash
-ARGUS_STORAGE_DIR=/app/ml
-ARGUS_DB_PATH=/app/ml/argus_echo.db
+```text
+Argus_Echo/
+|-- app.py                         # Streamlit dashboard
+|-- argus_model.py                 # Training, preprocessing, and model artifact helpers
+|-- persistence.py                 # User, model, diagnostic, and anomaly storage
+|-- train_model.py                 # Optional CLI training script
+|-- argus_logger.py                # Anomaly hinting helpers
+|-- requirements.txt               # Full local dependencies
+|-- requirements.runtime.txt       # Runtime-focused dependencies
+|-- data/                          # ICS security corpus PDFs
+|-- echo/
+|   |-- ingest.py                  # Builds the FAISS knowledge base
+|   |-- rag.py                     # Echo RAG chain
+|   |-- query_builder.py           # Converts anomaly records into Echo prompts
+|   |-- evaluate.py                # RAG evaluation utilities
 ```
+
+---
+
+## Technical Approach
+
+Argus uses an LSTM autoencoder for reconstruction-based anomaly detection.
+
+Before sequence creation, every numeric sensor column is augmented with a rolling variance feature:
+
+```python
+sensor_variance = sensor_reading.rolling(window=5).var()
+```
+
+This creates two feature groups:
+
+- raw telemetry readings
+- rolling variance signals
+
+The model learns normal behavior from the training CSV. During diagnostics, it reconstructs the testing CSV sequences and computes reconstruction error. When the anomaly score crosses the threshold, the app logs the anomaly and makes it available to Echo for explanation.
 
 ---
 
 ## ICS Security Corpus
 
-Echo's interpretation quality is directly proportional to corpus quality.
+Echo's interpretation quality depends on the quality of the documents in `data/`.
 
-| Document | Status |
-|---|---|
-| NIST SP 800-82 Rev 3 — ICS Security Guide | ✅ Included |
-| Malhotra et al. (2015) — LSTM for Anomaly Detection | ✅ Included |
-| Project Argus Technical Report | ✅ Included |
-| Kravchik & Shabtai (2018) — Detecting Cyber Attacks in ICS | ✅ Included |
-| CISA ICS Recommended Practices | ⬇ Recommended |
+Included corpus examples:
 
----
-
-## Deployment Philosophy & Future Work
-
-### Why a Local MVP?
-Argus Echo is intentionally scoped as a local Streamlit application for its MVP phase. Because this system is designed for classified, safety-critical ICS environments (like nuclear power plants), relying on external cloud APIs and public web deployments introduces unacceptable vulnerabilities. The primary focus of this build is proving the rigor of the **LSTM anomaly detection logic** and the **RAG-based operator guidance pipelines**. 
-
-### The Path to "True Edge"
-The target architecture for production will bypass cloud deployment entirely in favor of a true, air-gapped Edge deployment:
-- Replace Groq with a locally quantized LLM (e.g., Mistral 7B via Ollama).
-- Deploy via K3s (lightweight Kubernetes) directly onto on-premise industrial servers.
-- Ensure zero telemetry data leaves the facility's localized network.
+- NIST SP 800-82 Rev 3 - ICS Security Guide
+- LSTM anomaly detection research papers
+- Kravchik & Shabtai ICS attack detection paper
+- Project Argus technical report
 
 ---
-
-## Production Deployment Philosophy (GKE)
-
-*Note: The project has fully Dockerized services and Kubernetes manifests written for a Google Kubernetes Engine (GKE) deployment. I am currently blocked on cloud credits, but the deployment configuration is entirely in place. I mention this because it reflects how I approach engineering: I don't stop at making something work locally. I want to understand how it runs in production.*
-
-This repository includes a container-first deployment path for a public demo URL and for showcasing `Docker`, `Kubernetes`, `GKE`, `LLMs`, and `RAG` together in one project.
-
-### What is included
-
-- `Dockerfile` for a production-style Streamlit container
-- `.streamlit/config.toml` for headless cloud runtime
-- `k8s/namespace.yaml` for environment isolation
-- `k8s/deployment.yaml` with health probes and resource requests
-- `k8s/service.yaml` exposing the app through a public `LoadBalancer`
-- `k8s/secret.example.yaml` for the Groq API key
-
-### Before You Deploy
-
-Decide how the public demo should be initialized:
-
-- For a guided demo, include root-level `anomaly_detection_model.keras`, `scaler.pkl`, and `model_config.pkl` in the Docker build context so the first user can import them.
-- For a clean operator workflow, deploy without model artifacts and train the model inside the app after creating an account.
-- Include the `data/` PDF corpus if Echo retrieval should be available immediately.
-- Provide a valid `GROQ_API_KEY` through the Kubernetes secret or container environment.
-
-Runtime state is intentionally excluded from the container image:
-
-- `ml/` contains the SQLite database, uploaded CSVs, trained models, diagnostic outputs, and should be mounted as persistent storage in production.
-- `vectorstore/` is generated from `data/` and can be rebuilt from the Echo Guidance tab.
-
-### 1. Build the Docker image
-
-```bash
-docker build -t argus-echo:latest .
-docker run -p 8501:8501 --env GROQ_API_KEY=your_key_here argus-echo:latest
-```
-
-The container uses `requirements.runtime.txt` instead of the full research dependency set in `requirements.txt`. This keeps the deployment image smaller while still including the packages needed for the Streamlit app, in-app training, and Echo guidance.
-
-### 2. Push to Google Artifact Registry
-
-```bash
-gcloud auth configure-docker us-central1-docker.pkg.dev
-
-docker tag argus-echo:latest \
-  us-central1-docker.pkg.dev/PROJECT_ID/argus-echo/argus-echo:latest
-
-docker push \
-  us-central1-docker.pkg.dev/PROJECT_ID/argus-echo/argus-echo:latest
-```
-
-### 3. Deploy to GKE
-
-Create a GKE cluster, then apply the manifests:
-
-```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/secret.example.yaml
-kubectl apply -f k8s/deployment.yaml
-kubectl apply -f k8s/service.yaml
-```
-
-Update `k8s/deployment.yaml` with your real Artifact Registry image path before applying it. Replace the placeholder in `k8s/secret.example.yaml` with your real Groq key before applying it. The deployment manifest also creates a `10Gi` persistent volume claim and mounts it at `/app/ml` so user accounts, uploaded files, trained models, and diagnostic history survive pod restarts.
-
-### 4. Get the public URL
-
-```bash
-kubectl get svc -n argus-echo
-```
-
-When the external IP is assigned, the app is reachable at:
-
-```text
-http://EXTERNAL_IP/
-```
-
-For a cleaner portfolio URL, point a custom domain at the load balancer IP through Google Cloud DNS.
-
-### Resume Framing
-
-This deployment demonstrates:
-
-- containerized ML plus RAG application delivery with Docker
-- Kubernetes workload orchestration on GKE
-- secret management for LLM API access
-- health-checked public service exposure through a cloud load balancer
-- end-to-end applied AI workflow: anomaly detection, retrieval, grounding, and operator guidance
-
----
-
 
 *Argus Echo demonstrates the integration of Edge AI anomaly detection and RAG-based operator guidance for safety-critical ICS environments.*
