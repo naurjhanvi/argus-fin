@@ -8,3 +8,7 @@ __pycache__/
 .env
 .streamlit/secrets.toml
 data/anomaly_logs.json
+ml/
+*.csv
+*.h5
+vectorstore/

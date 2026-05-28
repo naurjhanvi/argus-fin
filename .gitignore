@@ -10,7 +10,7 @@ __pycache__/
 .env
 
 # Streamlit
-.streamlit/
+.streamlit/secrets.toml
 
 # Models & Scalers (generated during training)
 *.keras
@@ -24,6 +24,9 @@ data/anomaly_logs.json
 
 # Vector Store (generated from corpus)
 vectorstore/
+
+# Local multi-user app storage
+ml/
 
 # OS / IDE
 .DS_Store

@@ -5,3 +5,12 @@ scikit-learn
 tensorflow==2.16.1
 streamlit
 plotly
+python-dotenv
+langchain-community
+langchain-text-splitters
+langchain-huggingface
+langchain-groq
+faiss-cpu
+sentence-transformers
+pypdf
+docx2txt

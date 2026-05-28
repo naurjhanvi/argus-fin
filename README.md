@@ -174,13 +174,18 @@ python -c "from echo.ingest import ingest_data_folder; print(ingest_data_folder(
 streamlit run app.py
 ```
 
-The app expects these trained artifacts at runtime:
+The current Streamlit app is multi-user. On first launch, create an account, then either:
 
-- `anomaly_detection_model.keras`
-- `scaler.pkl`
-- `model_config.pkl`
+- train a facility-specific model from a normal-operation CSV in the **Train Model** tab, or
+- import the existing local artifacts if these files are present at the repository root:
+  `anomaly_detection_model.keras`, `scaler.pkl`, and `model_config.pkl`.
 
-If they are missing, the app now stops immediately with a clear startup error.
+User accounts, uploaded training files, model artifacts, diagnostic runs, and anomaly history are stored under `ml/` by default. Override this for production with:
+
+```bash
+ARGUS_STORAGE_DIR=/app/ml
+ARGUS_DB_PATH=/app/ml/argus_echo.db
+```
 
 ---
 
@@ -228,13 +233,17 @@ This repository includes a container-first deployment path for a public demo URL
 
 ### Before You Deploy
 
-Make sure the image build context contains:
+Decide how the public demo should be initialized:
 
-- `anomaly_detection_model.keras`
-- `scaler.pkl`
-- `model_config.pkl`
-- your `data/` PDF corpus if Echo retrieval should be available immediately
-- a valid `GROQ_API_KEY`
+- For a guided demo, include root-level `anomaly_detection_model.keras`, `scaler.pkl`, and `model_config.pkl` in the Docker build context so the first user can import them.
+- For a clean operator workflow, deploy without model artifacts and train the model inside the app after creating an account.
+- Include the `data/` PDF corpus if Echo retrieval should be available immediately.
+- Provide a valid `GROQ_API_KEY` through the Kubernetes secret or container environment.
+
+Runtime state is intentionally excluded from the container image:
+
+- `ml/` contains the SQLite database, uploaded CSVs, trained models, diagnostic outputs, and should be mounted as persistent storage in production.
+- `vectorstore/` is generated from `data/` and can be rebuilt from the Echo Guidance tab.
 
 ### 1. Build the Docker image
 
@@ -243,7 +252,7 @@ docker build -t argus-echo:latest .
 docker run -p 8501:8501 --env GROQ_API_KEY=your_key_here argus-echo:latest
 ```
 
-The container uses `requirements.runtime.txt` instead of the full research dependency set in `requirements.txt`. This keeps the deployment image smaller and avoids pulling heavyweight training and evaluation packages that are not required by the current Streamlit app.
+The container uses `requirements.runtime.txt` instead of the full research dependency set in `requirements.txt`. This keeps the deployment image smaller while still including the packages needed for the Streamlit app, in-app training, and Echo guidance.
 
 ### 2. Push to Google Artifact Registry
 
@@ -268,7 +277,7 @@ kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
 ```
 
-Update `k8s/deployment.yaml` with your real `PROJECT_ID`. Replace the placeholder in `k8s/secret.example.yaml` with your real Groq key before applying it.
+Update `k8s/deployment.yaml` with your real Artifact Registry image path before applying it. Replace the placeholder in `k8s/secret.example.yaml` with your real Groq key before applying it. The deployment manifest also creates a `10Gi` persistent volume claim and mounts it at `/app/ml` so user accounts, uploaded files, trained models, and diagnostic history survive pod restarts.
 
 ### 4. Get the public URL
 
