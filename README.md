@@ -4,6 +4,12 @@ Universal Edge AI diagnostics for industrial telemetry.
 
 Argus Echo is a Streamlit application that lets a user train a facility-specific anomaly detection model from normal telemetry, run diagnostics on new telemetry, and ask Echo for operator guidance grounded in an ICS security knowledge base.
 
+This repository is an extension of the original Project Argus work. Argus Echo turns that core ML/anomaly-detection foundation into a deployed multi-user diagnostic app with accounts, saved model artifacts, diagnostic history, Echo guidance, Docker packaging, and GKE deployment files.
+
+To understand the core ML approach, model motivation, anomaly detection logic, and original research direction, refer to Project Argus:
+
+https://github.com/naurjhanvi/project-argus
+
 Live app:
 
 http://34.121.158.211
@@ -338,13 +344,3 @@ argus_echo/
 - The public URL remains live when the local laptop is closed, as long as the GKE cluster, pod, service, and billing remain active.
 - New deployments require Docker Desktop only for building/pushing from the local machine.
 - Supabase is the recommended next database/storage step before inviting many concurrent users.
-
-## Known Next Steps
-
-- Move SQLite data to Supabase Postgres.
-- Move large files and model artifacts to Supabase Storage or Google Cloud Storage.
-- Add proper password reset/email verification if public signups are kept.
-- Add background training/diagnostic workers.
-- Add per-user quotas and upload limits.
-- Add HTTPS and a domain name.
-- Add monitoring/alerts for pod restarts, memory pressure, and failed requests.
