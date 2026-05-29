@@ -15,6 +15,8 @@ from tensorflow.keras.models import load_model
 from argus_logger import infer_attack_hint
 from argus_model import (
     CONFIG_PATH,
+    MAX_DIAGNOSTIC_ROWS,
+    MAX_TRAINING_ROWS,
     MODEL_PATH,
     SCALER_PATH,
     create_sequence,
@@ -216,7 +218,7 @@ def render_training_tab(user):
             )
         return
 
-    train_df = pd.read_csv(training_file)
+    train_df = pd.read_csv(training_file, nrows=MAX_TRAINING_ROWS)
     try:
         preview_df = prepare_telemetry_frame(train_df)
     except Exception as exc:
@@ -226,6 +228,10 @@ def render_training_tab(user):
     st.caption(
         f"Detected {len([c for c in preview_df.columns if '_variance' not in c.lower()])} "
         f"raw sensors and {preview_df.shape[1]} total model features."
+    )
+    st.caption(
+        f"Training preview and model fitting use up to {MAX_TRAINING_ROWS:,} rows "
+        "to keep the live service responsive."
     )
     st.dataframe(preview_df.head(5), width="stretch")
 
@@ -240,10 +246,7 @@ def render_training_tab(user):
 
                 model_id = uuid.uuid4().hex
                 artifact_dir = model_storage_dir(user["id"], model_id)
-                training_path = write_uploaded_file(
-                    training_file,
-                    artifact_dir / "uploaded_training.csv",
-                )
+                training_path = None
                 model_path = artifact_dir / "anomaly_detection_model.keras"
                 scaler_path = artifact_dir / "scaler.pkl"
                 config_path = artifact_dir / "model_config.pkl"
@@ -318,7 +321,7 @@ def render_diagnostics_tab(user):
             st.dataframe(pd.DataFrame(runs), width="stretch")
         return
 
-    df = pd.read_csv(uploaded_file)
+    df = pd.read_csv(uploaded_file, nrows=MAX_DIAGNOSTIC_ROWS)
 
     try:
         process_df = prepare_telemetry_frame(df)
@@ -338,6 +341,10 @@ def render_diagnostics_tab(user):
         st.stop()
 
     st.dataframe(process_df.head(3), width="stretch")
+    st.caption(
+        f"Diagnostics use up to {MAX_DIAGNOSTIC_ROWS:,} rows per uploaded CSV "
+        "to keep the live service responsive."
+    )
 
     st.subheader("Edge AI Inference")
 
@@ -360,7 +367,7 @@ def render_diagnostics_tab(user):
         with st.spinner("Processing on Edge Inference Engine..."):
             run_id = uuid.uuid4().hex
             run_dir = run_storage_dir(user["id"], run_id)
-            uploaded_path = write_uploaded_file(uploaded_file, run_dir / uploaded_file.name)
+            uploaded_path = None
             result_path = run_dir / "anomaly_results.json"
             create_diagnostic_run(
                 user_id=user["id"],
@@ -370,7 +377,7 @@ def render_diagnostics_tab(user):
                 result_path=result_path,
             )
 
-            predictions = model.predict(x_input, verbose=0)
+            predictions = model.predict(x_input, batch_size=256, verbose=0)
             mae_loss = np.mean(np.abs(predictions - x_input), axis=(1, 2))
 
             padded_loss = np.concatenate([np.zeros(time_steps), mae_loss])
@@ -476,23 +483,16 @@ def render_echo_tab(user):
     if api_key:
         os.environ["GROQ_API_KEY"] = api_key
 
-    try:
-        from echo.ingest import ingest_data_folder
-        from echo.query_builder import build_query_from_anomaly
-        from echo.rag import echo_is_ready, query_echo
-    except ModuleNotFoundError as exc:
-        st.error(
-            f"Echo dependency is missing: {exc.name}. Install the full project "
-            "requirements before using operator guidance."
-        )
-        st.code("pip install -r requirements.txt", language="powershell")
-        return
+    from echo.query_builder import build_query_from_anomaly
+    from echo.rag import echo_is_ready
 
     if not echo_is_ready():
         st.warning("Echo knowledge base has not been built yet.")
         if st.button("Build Knowledge Base From data/", type="primary"):
             with st.spinner("Indexing ICS documents from data/..."):
                 try:
+                    from echo.ingest import ingest_data_folder
+
                     chunk_count = ingest_data_folder()
                 except Exception as exc:
                     st.error(f"Knowledge base build failed. {exc}")
@@ -524,6 +524,8 @@ def render_echo_tab(user):
         question = build_query_from_anomaly(anomaly)
         with st.spinner("Echo is grounding the anomaly against the ICS knowledge base..."):
             try:
+                from echo.rag import query_echo
+
                 result = query_echo(question)
             except Exception as exc:
                 st.error(f"Echo analysis failed. {exc}")

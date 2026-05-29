@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import joblib
@@ -15,11 +16,15 @@ CONFIG_PATH = Path("model_config.pkl")
 DROP_KEYWORDS = ("time", "timestamp", "date", "label")
 ROLLING_WINDOW = 5
 TIME_STEPS = 10
+MAX_TRAINING_ROWS = int(os.getenv("ARGUS_MAX_TRAINING_ROWS", "20000"))
+MAX_DIAGNOSTIC_ROWS = int(os.getenv("ARGUS_MAX_DIAGNOSTIC_ROWS", "20000"))
 
 
 def prepare_telemetry_frame(df: pd.DataFrame) -> pd.DataFrame:
     cols_to_drop = [
-        col for col in df.columns if any(keyword in col.lower() for keyword in DROP_KEYWORDS)
+        col
+        for col in df.columns
+        if any(keyword in str(col).lower() for keyword in DROP_KEYWORDS)
     ]
     data = df.drop(columns=cols_to_drop)
     data = data.select_dtypes(include=[np.number])
@@ -31,14 +36,17 @@ def prepare_telemetry_frame(df: pd.DataFrame) -> pd.DataFrame:
     for col in original_cols:
         data[f"{col}_variance"] = data[col].rolling(window=ROLLING_WINDOW).var()
 
-    return data.fillna(0)
+    return data.fillna(0).astype("float32")
 
 
 def create_sequence(dataset, time_steps: int = TIME_STEPS):
-    sequence = []
-    for i in range(len(dataset) - time_steps):
-        sequence.append(dataset[i : (i + time_steps)])
-    return np.array(sequence)
+    dataset = np.asarray(dataset, dtype=np.float32)
+    if len(dataset) <= time_steps:
+        return np.empty((0, time_steps, dataset.shape[1]), dtype=np.float32)
+
+    shape = (len(dataset) - time_steps, time_steps, dataset.shape[1])
+    strides = (dataset.strides[0], dataset.strides[0], dataset.strides[1])
+    return np.lib.stride_tricks.as_strided(dataset, shape=shape, strides=strides).copy()
 
 
 def build_model(time_steps: int, num_features: int):
@@ -65,6 +73,11 @@ def train_from_dataframe(
     batch_size: int = 32,
     validation_split: float = 0.1,
 ):
+    original_rows = len(df)
+    if len(df) > MAX_TRAINING_ROWS:
+        step = max(len(df) // MAX_TRAINING_ROWS, 1)
+        df = df.iloc[::step].head(MAX_TRAINING_ROWS).copy()
+
     prepared = prepare_telemetry_frame(df)
 
     if len(prepared) <= TIME_STEPS:
@@ -73,7 +86,7 @@ def train_from_dataframe(
         )
 
     scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(prepared)
+    scaled_data = scaler.fit_transform(prepared).astype("float32")
     x_train = create_sequence(scaled_data, TIME_STEPS)
     num_features = x_train.shape[2]
 
@@ -95,6 +108,8 @@ def train_from_dataframe(
         "raw_sensor_count": len([c for c in prepared.columns if "_variance" not in c.lower()]),
         "rolling_window": ROLLING_WINDOW,
         "training_rows": len(prepared),
+        "source_training_rows": original_rows,
+        "max_training_rows": MAX_TRAINING_ROWS,
         "epochs": epochs,
         "batch_size": batch_size,
     }

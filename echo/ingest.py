@@ -1,52 +1,71 @@
 import os
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+from pathlib import Path
 
-VECTORSTORE_PATH = "vectorstore/echo"
+from pypdf import PdfReader
 
-def load_document(file_path: str):
+from echo.embeddings import HashingEmbeddings
+
+
+VECTORSTORE_PATH = str(Path(os.getenv("ARGUS_STORAGE_DIR", "ml")) / "vectorstore" / "echo")
+
+
+def load_document_text(file_path: str) -> str:
     ext = os.path.splitext(file_path)[-1].lower()
     if ext == ".pdf":
-        loader = PyPDFLoader(file_path)
-    elif ext == ".txt":
-        loader = TextLoader(file_path)
-    elif ext == ".docx":
-        loader = Docx2txtLoader(file_path)
-    else:
-        raise ValueError(f"Unsupported file type: {ext}")
-    return loader.load()
+        reader = PdfReader(file_path)
+        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
+    if ext == ".txt":
+        return Path(file_path).read_text(encoding="utf-8", errors="ignore")
+    if ext == ".docx":
+        import docx2txt
+
+        return docx2txt.process(file_path) or ""
+    raise ValueError(f"Unsupported file type: {ext}")
+
+
+def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[str]:
+    clean = " ".join(text.split())
+    if not clean:
+        return []
+
+    chunks = []
+    start = 0
+    while start < len(clean):
+        end = min(start + chunk_size, len(clean))
+        chunks.append(clean[start:end])
+        if end == len(clean):
+            break
+        start = max(end - overlap, start + 1)
+    return chunks
+
 
 def ingest_documents(file_paths: list[str]):
-    all_docs = []
+    from langchain_community.vectorstores import FAISS
+
+    texts = []
+    metadatas = []
     for path in file_paths:
-        docs = load_document(path)
-        all_docs.extend(docs)
+        for index, chunk in enumerate(chunk_text(load_document_text(path))):
+            texts.append(chunk)
+            metadatas.append({"source": path, "chunk": index})
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=300,
-        chunk_overlap=30
-    )
-    chunks = splitter.split_documents(all_docs)
+    if not texts:
+        raise ValueError("No text could be extracted from the supplied documents.")
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
-
-    vectorstore = FAISS.from_documents(chunks, embeddings)
+    vectorstore = FAISS.from_texts(texts, HashingEmbeddings(), metadatas=metadatas)
     vectorstore.save_local(VECTORSTORE_PATH)
-    return len(chunks)
+    return len(texts)
+
 
 def load_vectorstore():
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
-    )
+    from langchain_community.vectorstores import FAISS
+
     return FAISS.load_local(
         VECTORSTORE_PATH,
-        embeddings,
-        allow_dangerous_deserialization=True
+        HashingEmbeddings(),
+        allow_dangerous_deserialization=True,
     )
+
 
 def ingest_data_folder(folder_path: str = "data"):
     supported = [".pdf", ".txt", ".docx"]
@@ -57,9 +76,9 @@ def ingest_data_folder(folder_path: str = "data"):
     ]
     if not file_paths:
         raise ValueError(f"No supported documents found in {folder_path}/")
-    
+
     print(f"Found {len(file_paths)} documents to ingest:")
-    for p in file_paths:
-        print(f"  → {p}")
-    
+    for path in file_paths:
+        print(f"  -> {path}")
+
     return ingest_documents(file_paths)

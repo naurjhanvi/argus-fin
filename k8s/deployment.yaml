@@ -43,28 +43,38 @@ spec:
               value: /app/ml/argus_echo.db
             - name: ARGUS_SQLITE_TIMEOUT_SECONDS
               value: "30"
+            - name: ARGUS_MAX_TRAINING_ROWS
+              value: "20000"
+            - name: ARGUS_MAX_DIAGNOSTIC_ROWS
+              value: "20000"
           volumeMounts:
             - name: argus-echo-storage
               mountPath: /app/ml
           resources:
             requests:
               cpu: "500m"
-              memory: "1Gi"
+              memory: "2Gi"
+              ephemeral-storage: "2Gi"
             limits:
               cpu: "1"
-              memory: "2Gi"
+              memory: "3Gi"
+              ephemeral-storage: "3Gi"
           readinessProbe:
             httpGet:
               path: /_stcore/health
               port: 8501
             initialDelaySeconds: 20
             periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /_stcore/health
               port: 8501
             initialDelaySeconds: 30
             periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
       volumes:
         - name: argus-echo-storage
           persistentVolumeClaim:
