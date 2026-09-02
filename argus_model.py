@@ -13,7 +13,7 @@ from tensorflow.keras.models import Sequential
 MODEL_PATH = Path("anomaly_detection_model.keras")
 SCALER_PATH = Path("scaler.pkl")
 CONFIG_PATH = Path("model_config.pkl")
-DROP_KEYWORDS = ("time", "timestamp", "date", "label")
+DROP_KEYWORDS = ("label", "isfraud", "isflaggedfraud", "islaundering", "is laundering")
 ROLLING_WINDOW = 5
 TIME_STEPS = 10
 MAX_TRAINING_ROWS = int(os.getenv("ARGUS_MAX_TRAINING_ROWS", "20000"))
@@ -21,20 +21,55 @@ MAX_DIAGNOSTIC_ROWS = int(os.getenv("ARGUS_MAX_DIAGNOSTIC_ROWS", "20000"))
 
 
 def prepare_telemetry_frame(df: pd.DataFrame) -> pd.DataFrame:
+    # Rename duplicated 'Account' column if Pandas hasn't already (e.g. Account, Account.1)
+    cols = list(df.columns)
+    account_count = 0
+    for i, col in enumerate(cols):
+        if col.strip() == "Account":
+            account_count += 1
+            if account_count == 2:
+                cols[i] = "To_Account"
+        cols[i] = cols[i].strip()
+    df.columns = cols
+
+    # Drop target columns if they exist
     cols_to_drop = [
-        col
-        for col in df.columns
+        col for col in df.columns
         if any(keyword in str(col).lower() for keyword in DROP_KEYWORDS)
     ]
     data = df.drop(columns=cols_to_drop)
+    
+    # Sort by Timestamp if it exists
+    if "Timestamp" in data.columns:
+        data["Timestamp"] = pd.to_datetime(data["Timestamp"])
+        data = data.sort_values(by="Timestamp").reset_index(drop=True)
+
+    # One-hot encode the 'Payment Format' column
+    if "Payment Format" in data.columns:
+        type_dummies = pd.get_dummies(data["Payment Format"], prefix="format")
+        data = pd.concat([data, type_dummies], axis=1)
+
+    # Calculate rolling features per Account (Transaction Velocity & Blind-Spot Fix)
+    amount_col = "Amount Paid" if "Amount Paid" in data.columns else "amount"
+    
+    if "Account" in data.columns and amount_col in data.columns:
+        data["amount_variance"] = data.groupby("Account")[amount_col].transform(lambda x: x.rolling(window=min(len(x), ROLLING_WINDOW), min_periods=1).var().fillna(0))
+        # For velocity, if we have a Timestamp, we could do a rolling count. Since we sorted, we can just use rolling window count
+        data["transaction_velocity"] = data.groupby("Account")[amount_col].transform(lambda x: x.rolling(window=min(len(x), ROLLING_WINDOW), min_periods=1).count().fillna(1))
+    else:
+        # Fallback if Account isn't present
+        if amount_col in data.columns:
+            data["amount_variance"] = data[amount_col].rolling(window=ROLLING_WINDOW, min_periods=1).var().fillna(0)
+
+    # Drop string/identifier columns before feeding to the model
+    ident_cols = ["Account", "To_Account", "Account.1", "From Bank", "To Bank", "Payment Format", "Timestamp", "Receiving Currency", "Payment Currency"]
+    ident_cols = [c for c in ident_cols if c in data.columns]
+    data = data.drop(columns=ident_cols)
+    
     data = data.select_dtypes(include=[np.number])
 
     if data.empty:
-        raise ValueError("No numeric telemetry columns were found in the uploaded CSV.")
-
-    original_cols = list(data.columns)
-    for col in original_cols:
-        data[f"{col}_variance"] = data[col].rolling(window=ROLLING_WINDOW).var()
+        raise ValueError("No numeric features were found in the uploaded CSV after processing.")
 
     return data.fillna(0).astype("float32")
 
@@ -105,7 +140,7 @@ def train_from_dataframe(
         "time_steps": TIME_STEPS,
         "num_features": num_features,
         "feature_names": list(prepared.columns),
-        "raw_sensor_count": len([c for c in prepared.columns if "_variance" not in c.lower()]),
+        "raw_feature_count": len([c for c in prepared.columns if "_variance" not in c.lower()]),
         "rolling_window": ROLLING_WINDOW,
         "training_rows": len(prepared),
         "source_training_rows": original_rows,

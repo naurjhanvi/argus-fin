@@ -116,7 +116,7 @@ def select_model(user_id: str):
 
     labels = {
         model["id"]: (
-            f"{model['name']} | {model['raw_sensor_count']} sensors | "
+            f"{model['name']} | {model['raw_feature_count']} sensors | "
             f"{model['created_at'][:19]}"
         )
         for model in models
@@ -134,13 +134,13 @@ def select_model(user_id: str):
 def render_training_tab(user):
     st.subheader("1. Train Facility-Specific Model")
     st.write(
-        "Upload normal-operation telemetry for the facility or system you want Argus "
+        "Upload normal-operation transactions for the facility or system you want Argus "
         "to learn. The model will learn that baseline and save the runtime artifacts "
         "needed for diagnostics."
     )
 
     training_file = st.file_uploader(
-        "Upload normal telemetry CSV",
+        "Upload normal transactions CSV",
         type=["csv"],
         key="training_csv",
     )
@@ -207,7 +207,7 @@ def render_training_tab(user):
                 pd.DataFrame(models)[
                     [
                         "name",
-                        "raw_sensor_count",
+                        "raw_feature_count",
                         "expected_feature_count",
                         "epochs",
                         "training_rows",
@@ -236,7 +236,7 @@ def render_training_tab(user):
     st.dataframe(preview_df.head(5), width="stretch")
 
     if st.button("Train Model", type="primary"):
-        with st.spinner("Training Argus on uploaded normal-operation telemetry..."):
+        with st.spinner("Training Argus on uploaded normal-operation transactions..."):
             try:
                 model, scaler, config, history = train_from_dataframe(
                     train_df,
@@ -304,7 +304,7 @@ def render_diagnostics_tab(user):
     time_steps = config["time_steps"]
     st.sidebar.success(f"System Loaded. AI Expects {expected_features} Input Signals.")
     st.sidebar.caption(
-        f"Trained on {config.get('raw_sensor_count', 'unknown')} raw sensors "
+        f"Trained on {config.get('raw_feature_count', 'unknown')} raw sensors "
         f"for {config.get('epochs', 'unknown')} epochs."
     )
 
@@ -402,8 +402,8 @@ def render_diagnostics_tab(user):
                             user_id=user["id"],
                             run_id=run_id,
                             model_id=model_record["id"],
-                            sensor_id=worst_sensor,
-                            facility=uploaded_file.name.replace(".csv", ""),
+                            primary_feature=worst_sensor,
+                            entity_id=uploaded_file.name.replace(".csv", ""),
                             timestamp=int(idx),
                             mse_score=mse_val,
                             variance=variance_val,
@@ -470,6 +470,24 @@ def render_diagnostics_tab(user):
 
             st.plotly_chart(fig, width="stretch")
 
+            st.subheader("Fraud Ring Visualization")
+            from graph_utils import graph_db
+            with st.spinner("Synchronizing graph database..."):
+                try:
+                    graph_db.ingest_transactions(df)
+                    if "Account" in df.columns and len(anomaly_indices) > 0:
+                        top_acc = df.loc[anomaly_indices[0], "Account"]
+                        ring = graph_db.get_fraud_ring(str(top_acc))
+                        if ring["nodes"]:
+                            st.write(f"Graph Subgraph for Flagged Entity: {top_acc}")
+                            st.json(ring)
+                        else:
+                            st.info("No extended fraud ring found for this entity.")
+                    else:
+                        st.info("No target account available for graph query.")
+                except Exception as exc:
+                    st.warning(f"Graph DB visualization skipped (Neo4j unreachable): {exc}")
+
 
 def render_echo_tab(user):
     st.subheader("3. Echo Operator Guidance")
@@ -489,7 +507,7 @@ def render_echo_tab(user):
     if not echo_is_ready():
         st.warning("Echo knowledge base has not been built yet.")
         if st.button("Build Knowledge Base From data/", type="primary"):
-            with st.spinner("Indexing ICS documents from data/..."):
+            with st.spinner("Indexing documents from data/..."):
                 try:
                     from echo.ingest import ingest_data_folder
 
@@ -522,7 +540,7 @@ def render_echo_tab(user):
             return
 
         question = build_query_from_anomaly(anomaly)
-        with st.spinner("Echo is grounding the anomaly against the ICS knowledge base..."):
+        with st.spinner("Echo is grounding the anomaly against the financial knowledge base..."):
             try:
                 from echo.rag import query_echo
 
@@ -536,11 +554,11 @@ def render_echo_tab(user):
         st.caption(f"Sources retrieved: {result['sources_used']}")
 
 
-st.title("Universal Edge AI Diagnostic Tool")
+st.title("Argus Fin Fraud Detection Engine")
 st.markdown(
     """
 **System Status:** Ready for Analysis
-**Target Domain:** Safety-Critical Infrastructure (ICS, Aerospace, Power Grids)
+**Target Domain:** Financial Fraud Detection (Razorpay Hackathon)
 """
 )
 

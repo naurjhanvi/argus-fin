@@ -41,7 +41,7 @@ def init_db():
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
                 name TEXT NOT NULL,
-                raw_sensor_count INTEGER NOT NULL,
+                raw_feature_count INTEGER NOT NULL,
                 expected_feature_count INTEGER NOT NULL,
                 epochs INTEGER NOT NULL,
                 batch_size INTEGER NOT NULL,
@@ -73,8 +73,8 @@ def init_db():
                 user_id TEXT NOT NULL,
                 run_id TEXT NOT NULL,
                 model_id TEXT NOT NULL,
-                sensor_id TEXT NOT NULL,
-                facility TEXT NOT NULL,
+                primary_feature TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
                 timestamp INTEGER NOT NULL,
                 mse_score REAL NOT NULL,
                 variance REAL NOT NULL,
@@ -166,7 +166,7 @@ def create_model_record(
         conn.execute(
             """
             INSERT INTO models (
-                id, user_id, name, raw_sensor_count, expected_feature_count, epochs,
+                id, user_id, name, raw_feature_count, expected_feature_count, epochs,
                 batch_size, training_rows, training_file_path, model_path, scaler_path,
                 config_path, config_json, created_at
             )
@@ -176,7 +176,7 @@ def create_model_record(
                 model_id,
                 user_id,
                 name,
-                config["raw_sensor_count"],
+                config["raw_feature_count"],
                 config["num_features"],
                 config["epochs"],
                 config["batch_size"],
@@ -260,8 +260,8 @@ def log_anomaly_record(
     user_id: str,
     run_id: str,
     model_id: str,
-    sensor_id: str,
-    facility: str,
+    primary_feature: str,
+    entity_id: str,
     timestamp: int,
     mse_score: float,
     variance: float,
@@ -272,7 +272,7 @@ def log_anomaly_record(
         conn.execute(
             """
             INSERT INTO anomalies (
-                id, user_id, run_id, model_id, sensor_id, facility, timestamp,
+                id, user_id, run_id, model_id, primary_feature, entity_id, timestamp,
                 mse_score, variance, attack_hint, logged_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -282,8 +282,8 @@ def log_anomaly_record(
                 user_id,
                 run_id,
                 model_id,
-                sensor_id,
-                facility,
+                primary_feature,
+                entity_id,
                 int(timestamp),
                 round(float(mse_score), 4),
                 round(float(variance), 6),

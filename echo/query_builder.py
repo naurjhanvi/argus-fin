@@ -1,25 +1,23 @@
 from argus_logger import get_recent_anomalies, get_all_anomalies
 
 ATTACK_DESCRIPTIONS = {
-    "replay_attack": (
-        "a Replay Attack — the sensor variance dropped to exactly 0.0, "
-        "indicating the sensor output has been frozen and is broadcasting "
-        "a static baseline while physical conditions may have changed."
+    "micro_structuring": (
+        "Micro-Structuring — the transaction variance dropped to exactly 0.0, "
+        "indicating identical recurring transaction amounts, a common pattern "
+        "used to evade AML threshold rules."
     ),
-    "low_entropy_anomaly": (
-        "a Low-Entropy Anomaly — near-zero variance combined with an elevated "
-        "MSE score, suggesting the sensor is artificially stable in a system "
-        "where natural thermodynamic noise is expected."
+    "automated_bot_activity": (
+        "Automated Bot Activity — near-zero variance combined with an elevated "
+        "Risk Score, suggesting scripted transactions or card testing behavior."
     ),
-    "high_deviation_anomaly": (
-        "a High-Deviation Anomaly — the LSTM-AE reconstruction error is "
-        "significantly above the normal baseline, indicating sensor readings "
-        "that deviate sharply from learned normal behaviour."
+    "account_takeover": (
+        "Account Takeover (ATO) — the anomaly score is significantly above "
+        "the normal baseline, indicating transaction patterns that deviate sharply "
+        "from the user's historical behavior."
     ),
-    "subtle_anomaly": (
-        "a Subtle Anomaly — MAE score is above the detection threshold but "
-        "variance remains present, suggesting early-stage deviation or "
-        "gradual sensor drift."
+    "suspicious_transfer": (
+        "Suspicious Transfer — Anomaly score is above the detection threshold, "
+        "suggesting a potentially illicit transfer or layering activity."
     ),
     "unknown": (
         "an anomaly of unclassified type — insufficient signal characteristics "
@@ -34,21 +32,21 @@ def build_query_from_anomaly(anomaly: dict) -> str:
     )
 
     query = f"""
-An anomaly has been detected by the Argus Edge AI system in a safety-critical 
-industrial control system. Here are the technical details:
+An anomaly has been detected by the Argus Fin AI system in a payment gateway 
+transaction stream. Here are the technical details:
 
-- Sensor ID: {anomaly['sensor_id']}
-- Facility: {anomaly['facility']}
-- Timestamp: {anomaly['timestamp']}
-- MAE Anomaly Score: {anomaly['mse_score']} (detection threshold: 0.13)
-- Sensor Variance: {anomaly['variance']}
+- Primary Feature/Entity: {anomaly.get('primary_feature', anomaly.get('sensor_id', 'unknown'))}
+- Dataset/Merchant: {anomaly.get('entity_id', anomaly.get('facility', 'unknown'))}
+- Timestamp/Step: {anomaly['timestamp']}
+- MAE Anomaly Score: {anomaly['mse_score']} 
+- Variance: {anomaly['variance']}
 - Detected Pattern: {attack_desc}
 
-Based on ICS security literature and known cyber-physical attack patterns:
-1. What attack technique does this pattern most closely match?
-2. What is the recommended immediate operator response?
-3. What downstream systems or sensors should be cross-checked?
-4. What is the potential physical consequence if this goes unaddressed?
+Based on financial fraud literature and known AML/CFT attack patterns:
+1. What fraud technique does this pattern most closely match?
+2. What is the recommended immediate analyst response?
+3. What downstream accounts or merchants should be cross-checked?
+4. What is the potential financial consequence if this goes unaddressed?
 """.strip()
 
     return query
@@ -75,22 +73,22 @@ def build_summary_query(n: int = 5) -> str:
     lines = []
     for a in recent:
         lines.append(
-            f"- Sensor {a['sensor_id']} | Facility: {a['facility']} | "
+            f"- Entity {a.get('primary_feature', a.get('sensor_id', 'unknown'))} | Merchant: {a.get('entity_id', a.get('facility', 'unknown'))} | "
             f"MAE: {a['mse_score']} | Pattern: {a['attack_hint']} | "
             f"Time: {a['timestamp']}"
         )
 
     query = f"""
-The Argus Edge AI system has detected {len(recent)} anomalies recently 
-in safety-critical ICS infrastructure. Summary:
+The Argus Fin AI system has detected {len(recent)} anomalies recently 
+in the payment gateway stream. Summary:
 
 {chr(10).join(lines)}
 
 Based on this pattern of detections:
-1. Is there evidence of a coordinated multi-sensor attack?
-2. Which facility appears most at risk?
-3. What attack campaign does this pattern suggest?
-4. What is the recommended security posture for the operator?
+1. Is there evidence of a coordinated multi-account fraud ring?
+2. Which merchant or entity appears most at risk?
+3. What fraud campaign does this pattern suggest?
+4. What is the recommended security posture for the risk team?
 """.strip()
 
     return query

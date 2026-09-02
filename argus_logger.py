@@ -61,10 +61,10 @@ def get_all_anomalies():
 
 def infer_attack_hint(variance: float, mse_score: float) -> str:
     if variance == 0.0:
-        return "replay_attack"          
+        return "micro_structuring"          
     elif variance < 0.01 and mse_score > 1.0:
-        return "low_entropy_anomaly"   
+        return "automated_bot_activity"   
     elif mse_score > 3.0:
-        return "high_deviation_anomaly" 
+        return "account_takeover" 
     else:
-        return "subtle_anomaly"
+        return "suspicious_transfer"

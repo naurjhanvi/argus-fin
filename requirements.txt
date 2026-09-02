@@ -20,3 +20,4 @@ docx2txt
 fastapi
 uvicorn
 sqlalchemy
+neo4j
