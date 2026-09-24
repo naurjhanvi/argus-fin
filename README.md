@@ -1,346 +1,134 @@
-# Argus Echo
+# Argus Fin
 
-Universal Edge AI diagnostics for industrial telemetry.
+Argus Fin is a transaction anomaly detection prototype for financial fraud and suspicious payment activity. It includes a Streamlit dashboard for training and reviewing anomaly models, an optional FastAPI prediction service, and Echo, a retrieval-augmented assistant for financial fraud guidance.
 
-Argus Echo is a Streamlit application that lets a user train a facility-specific anomaly detection model from normal telemetry, run diagnostics on new telemetry, and ask Echo for operator guidance grounded in an ICS security knowledge base.
+The detector is an LSTM autoencoder trained on transactions treated as normal. It learns a reconstruction baseline; elevated reconstruction error flags unusual activity for review. It is a prototype and should not be treated as a production fraud decision system or as a substitute for investigation.
 
-This repository is an extension of the original Project Argus work. Argus Echo turns that core ML/anomaly-detection foundation into a deployed multi-user diagnostic app with accounts, saved model artifacts, diagnostic history, Echo guidance, Docker packaging, and GKE deployment files.
+## Features
 
-To understand the core ML approach, model motivation, anomaly detection logic, and original research direction, refer to Project Argus:
+- Create an account and keep model metadata, diagnostic runs, and anomaly history scoped to that account in the Streamlit app.
+- Train a model by uploading a CSV of normal transactions.
+- Analyze a CSV with a selected model, review anomaly scores and visualizations, and explore flagged entities and transaction relationships.
+- Build Echo's local document index from the supported files in `data/` and ask for guidance using retrieved material and the Groq API.
+- Optionally serve a JSON prediction endpoint with FastAPI when root-level model artifacts are available.
 
-https://github.com/naurjhanvi/project-argus
+## Requirements
 
-Live app:
+- Python 3.10 or newer (the Docker image uses Python 3.11).
+- A virtual environment is recommended.
+- A Groq API key is needed for Echo responses. The dashboard and detector can be used without Echo.
 
-http://34.121.158.211
+## Run locally
 
-
-## What The App Does
-
-Argus Echo has three main flows:
-
-1. Train Model
-
-   Upload a normal-operation telemetry CSV. Argus preprocesses numeric sensor columns, adds rolling variance features, trains an LSTM autoencoder, and saves the trained model for that user account.
-
-2. Run Diagnostics
-
-   Upload a telemetry CSV to analyze. Argus loads the selected trained model, checks the feature shape, computes reconstruction error, highlights anomalous windows, stores the run, and shows charts/history in the dashboard.
-
-3. Echo Guidance
-
-   Build a knowledge base from the documents in `data/`, then ask Echo for operator guidance based on the latest anomaly. Echo uses retrieval augmented generation with Groq to produce ICS-focused response text.
-
-## Current Production URL
-
-The current deployed app is available at:
-
-```text
-http://34.121.158.211
-```
-
-Anyone with the URL can open the app. They still need to create an account or log in inside the app before training models or running diagnostics.
-
-## Current Deployment
-
-The app is deployed on Google Cloud using:
-
-- Google Kubernetes Engine: `argus-echo-cluster`
-- GCP project: `argus-echo`
-- Region: `us-central1`
-- Artifact Registry image:
-  `us-central1-docker.pkg.dev/argus-echo/argus-echo/argus-echo:latest`
-- Kubernetes namespace: `argus-echo`
-- Kubernetes deployment: `argus-echo`
-- Kubernetes service: `argus-echo`
-- Service type: `LoadBalancer`
-- Public IP: `34.121.158.211`
-
-The container serves Streamlit on port `8501`. The Kubernetes service exposes it publicly on port `80`.
-
-## Data Storage
-
-Current production storage is file-based and SQLite-based.
-
-Inside the GKE pod:
-
-```text
-/app/ml
-```
-
-This path is mounted from the Kubernetes persistent volume claim:
-
-```text
-argus-echo-storage
-```
-
-The database is:
-
-```text
-/app/ml/argus_echo.db
-```
-
-The SQLite database stores:
-
-- user accounts
-- password salts and password hashes
-- model metadata
-- diagnostic run metadata
-- anomaly records
-- Echo answers
-
-Model and diagnostic artifacts are stored under:
-
-```text
-/app/ml/users/<user_id>/models/<model_id>/
-/app/ml/users/<user_id>/diagnostics/<run_id>/
-```
-
-Echo vector indexes are stored under:
-
-```text
-/app/ml/vectorstore/echo/
-```
-
-### Important Storage Limitation
-
-This is acceptable for a demo or small controlled test, but it is not the right final architecture for many users.
-
-The current app runs one pod with SQLite on a persistent volume. If many users train models or run diagnostics at the same time, the app can become slow or hit SQLite write contention. Scaling to multiple pods would also be awkward because the PVC is configured as `ReadWriteOnce`.
-
-For a real multi-user production version, move to:
-
-- Supabase Postgres for users, model metadata, diagnostic runs, anomalies, and Echo answers
-- Supabase Storage or Google Cloud Storage for trained model files, scalers, configs, diagnostic outputs, and uploaded documents
-- background jobs for training and diagnostics instead of doing heavy work inside the Streamlit request/session process
-
-## How Users Use The App
-
-1. Open the live URL:
-
-   ```text
-   http://34.121.158.211
-   ```
-
-2. Create an account from the sidebar.
-
-3. Open the `Train Model` tab.
-
-4. Upload a CSV containing normal-operation telemetry.
-
-5. Choose:
-
-   - model name
-   - training epochs
-   - batch size
-
-6. Click `Train Model`.
-
-7. Wait for training to finish. The app saves the model under the logged-in account.
-
-8. Open the `Run Diagnostics` tab.
-
-9. Select the trained model.
-
-10. Upload a telemetry CSV for analysis.
-
-11. Select sensors to visualize.
-
-12. Click `Run Diagnostics`.
-
-13. Review anomaly scores, charts, anomaly records, and diagnostic history.
-
-14. Open `Echo Guidance`.
-
-15. If the Echo knowledge base is not built yet, click `Build Knowledge Base From data/`.
-
-16. Ask Echo for guidance on the latest anomaly.
-
-## CSV Expectations
-
-The training and diagnostic files should use the same telemetry shape.
-
-The app:
-
-- drops timestamp/date/time/label-like columns
-- keeps numeric columns
-- adds rolling variance features for every numeric sensor
-- expects the diagnostic CSV to produce the same feature count as the trained model
-
-Example:
-
-```text
-87 raw numeric sensors -> 174 model features
-```
-
-If a diagnostic file has a different sensor layout, train a new model for that layout.
-
-## Current Runtime Limits
-
-The deployed app currently caps rows to keep memory and CPU usage reasonable inside the GKE pod:
-
-```text
-ARGUS_MAX_TRAINING_ROWS=20000
-ARGUS_MAX_DIAGNOSTIC_ROWS=20000
-```
-
-Large CSV files can still be uploaded, but the model flow samples/caps rows before training or diagnostics.
-
-## Local Development
-
-### Prerequisites
-
-- Python 3.10+
-- Docker Desktop, only if building or testing the container locally
-- Google Cloud SDK, only if deploying to GCP
-- kubectl, only if deploying to GKE
-- Groq API key for Echo guidance
-
-### Install Python Dependencies
+From the repository root, create and activate a virtual environment, then install dependencies:
 
 ```powershell
-cd C:\Users\ranij\projects\argus_echo
-python -m venv venv
-.\venv\Scripts\activate
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Run Locally
+Start the dashboard:
 
 ```powershell
 streamlit run app.py
 ```
 
-By default, local data is stored under:
+Streamlit prints the local URL, usually `http://localhost:8501`. Create an account in the sidebar to use model training and diagnostics.
 
-```text
-ml/
-```
-
-You can override storage paths with environment variables:
+Optional environment variables:
 
 ```powershell
+$env:GROQ_API_KEY = "your_groq_api_key"
 $env:ARGUS_STORAGE_DIR = "ml"
 $env:ARGUS_DB_PATH = "ml\argus_echo.db"
-$env:GROQ_API_KEY = "your_groq_api_key"
-streamlit run app.py
+$env:ARGUS_SQLITE_TIMEOUT_SECONDS = "30"
+$env:ARGUS_MAX_TRAINING_ROWS = "20000"
+$env:ARGUS_MAX_DIAGNOSTIC_ROWS = "20000"
 ```
 
-## Docker Build
+The storage variables default to `ml/`, `ml/argus_echo.db`, and a 30-second SQLite timeout. Training and diagnostic row limits default to 20,000 each. The app reads at most the configured row limit from uploaded CSV files.
 
-Build the production image:
+## Dashboard workflow
 
-```powershell
-docker build -t us-central1-docker.pkg.dev/argus-echo/argus-echo/argus-echo:latest .
-```
+1. Open **Train Model** and upload a CSV containing normal transactions. Choose a model name, epoch count, and batch size, then train. The app saves the model, scaler, and feature configuration for the signed-in account.
+2. Open **Run Diagnostics**, select a model, and upload transactions to analyze. Use the charts, anomaly details, and history to investigate unusual activity.
+3. For Echo, provide `GROQ_API_KEY`, then build the knowledge base from `data/` in the **Echo Operator Guidance** tab. Ask Echo about a recent anomaly.
 
-Push it:
+Training and diagnostic files need compatible transaction fields and feature layouts. Preprocessing drops fraud/label columns (including `IsLaundering` and `IsFraud` variants), sorts by `Timestamp` when present, one-hot encodes `Payment Format`, derives rolling amount variance and transaction velocity by account when possible, drops identifier/text fields, and retains numeric features. The selected model's saved feature configuration is used for inference; a materially different input schema may not be suitable for that model.
 
-```powershell
-docker push us-central1-docker.pkg.dev/argus-echo/argus-echo/argus-echo:latest
-```
+The `data/` directory contains the financial crime and fraud reference PDFs used by Echo. Add `.pdf`, `.txt`, or `.docx` documents there before building or rebuilding its index. The generated FAISS index is stored under the configured storage directory at `vectorstore/echo/`.
 
-Docker Desktop is only needed while building, tagging, running, or pushing images from your machine. Once the image is pushed and Kubernetes is running it in GKE, closing Docker Desktop does not stop the public website.
+## FastAPI prediction service
 
-## Deploy To GKE
-
-Set the project:
-
-```powershell
-gcloud config set project argus-echo
-```
-
-Get cluster credentials:
-
-```powershell
-gcloud container clusters get-credentials argus-echo-cluster --region us-central1 --project argus-echo
-```
-
-Apply Kubernetes manifests:
-
-```powershell
-kubectl apply -f k8s\namespace.yaml
-kubectl apply -f k8s\secret.example.yaml
-kubectl apply -f k8s\deployment.yaml
-kubectl apply -f k8s\service.yaml
-```
-
-Restart the deployment after pushing a new `latest` image:
-
-```powershell
-kubectl -n argus-echo rollout restart deployment/argus-echo
-kubectl -n argus-echo rollout status deployment/argus-echo --timeout=300s
-```
-
-Check pods:
-
-```powershell
-kubectl -n argus-echo get pods -o wide
-```
-
-Check the public service:
-
-```powershell
-kubectl -n argus-echo get svc
-```
-
-Check logs:
-
-```powershell
-kubectl -n argus-echo logs deployment/argus-echo --tail=100
-```
-
-Health check:
-
-```powershell
-curl http://34.121.158.211/_stcore/health
-```
-
-## Project Structure
+`api.py` defines a separate FastAPI app. It loads these artifacts from the current working directory when the module starts:
 
 ```text
-argus_echo/
-|-- app.py                    Streamlit UI and app workflow
-|-- argus_model.py            Telemetry preprocessing, LSTM model, training helpers
-|-- persistence.py            SQLite users, models, diagnostics, anomalies
-|-- argus_logger.py           Attack hint helper logic
-|-- Dockerfile                Production container image
-|-- requirements.txt          Python dependencies
-|-- data/                     ICS/security corpus documents for Echo
-|-- echo/
-|   |-- embeddings.py         Local deterministic embeddings for FAISS
-|   |-- ingest.py             Builds Echo FAISS knowledge base
-|   |-- rag.py                Echo retrieval and Groq generation
-|   |-- query_builder.py      Converts anomaly records into Echo prompts
-|-- k8s/
-|   |-- namespace.yaml        Kubernetes namespace
-|   |-- secret.example.yaml   Secret manifest template/current secret manifest
-|   |-- deployment.yaml       GKE deployment and PVC
-|   |-- service.yaml          Public LoadBalancer service
+anomaly_detection_model.keras
+scaler.pkl
+model_config.pkl
 ```
 
-## Technology Used
+Start it from the repository root with:
 
-- Python
-- Streamlit
-- TensorFlow/Keras
-- scikit-learn
-- pandas
-- NumPy
-- Plotly
-- SQLite
-- FAISS
-- LangChain community vector store integration
-- Groq Llama 3.3 70B for Echo guidance
-- Docker
-- Google Artifact Registry
-- Google Kubernetes Engine
-- Kubernetes LoadBalancer service
+```powershell
+uvicorn api:app --host 0.0.0.0 --port 8000
+```
 
-## Operational Notes
+Check `GET /health` for service/model status. `POST /predict` accepts a JSON body of the form:
 
-- The app currently runs as one GKE replica.
-- The app stores state in `/app/ml` through a persistent volume claim.
-- The public URL remains live when the local laptop is closed, as long as the GKE cluster, pod, service, and billing remain active.
-- New deployments require Docker Desktop only for building/pushing from the local machine.
-- Supabase is the recommended next database/storage step before inviting many concurrent users.
+```json
+{
+  "transactions": [
+    {"Timestamp": "2024-01-01T12:00:00Z", "Account": "A1", "Amount Paid": 125.5, "Payment Format": "ACH"}
+  ]
+}
+```
+
+The response contains `risk_score` (a heuristic 0–100 score based on the final reconstruction error), `raw_mae`, and `is_blocked` (true when the score exceeds 80). This endpoint is a prototype signal, not a calibrated probability or a production authorization decision. The FastAPI service uses root-level artifacts; it does not automatically select the per-account models saved by the Streamlit app.
+
+## Model and data notes
+
+- The autoencoder uses 10-row sequences and a rolling feature window of 5.
+- The default training and diagnostics row limits are 20,000. Override them with `ARGUS_MAX_TRAINING_ROWS` and `ARGUS_MAX_DIAGNOSTIC_ROWS`.
+- The app's SQLite database and user model/run files are stored under `ARGUS_STORAGE_DIR` (default `ml/`). Keep this directory persistent if you need to retain local data.
+- `train_model.py` is an auxiliary command-line training script; the supported workflow documented here is model training in the Streamlit app.
+- `split_dataset.py` is a local dataset preparation helper with machine-specific input/output paths; edit those paths before using it.
+
+## Docker
+
+Build and run the Streamlit dashboard container:
+
+```powershell
+docker build -t argus-fin .
+docker run --rm -p 8501:8501 -v "${PWD}/ml:/app/ml" -e GROQ_API_KEY="your_groq_api_key" argus-fin
+```
+
+The image starts Streamlit on port 8501 and includes a Streamlit health check. The volume mount preserves app storage between container runs. The Docker image installs `requirements.runtime.txt`, which does not include FastAPI or Uvicorn; run the API locally from an environment installed with `requirements.txt`, or add those packages to the runtime requirements before building an API container.
+
+## Repository layout
+
+```text
+app.py                  Streamlit dashboard and user workflows
+api.py                  Optional FastAPI prediction endpoint
+argus_model.py          Transaction preprocessing, model training, artifact helpers
+persistence.py          SQLite accounts, model metadata, runs, and anomaly history
+argus_logger.py         Anomaly hint helper and legacy JSON logger
+graph_utils.py          Transaction relationship graph utilities
+echo/                   Document ingestion, retrieval, prompting, and evaluation helpers
+data/                   Reference documents for Echo
+k8s/                    Kubernetes manifests (currently named/configured for argus-echo)
+.streamlit/config.toml  Streamlit server settings
+Dockerfile              Streamlit container image
+requirements.txt        Full development dependencies, including API/evaluation packages
+requirements.runtime.txt Runtime dependencies used by the Docker image
+```
+
+## Deployment manifests
+
+The files in `k8s/` are inherited deployment manifests named for `argus-echo` and currently reference its Google Cloud project, registry image, namespace, and service. They are not a ready-to-apply deployment configuration for Argus Fin. Update those values and validate the storage, secrets, and deployment settings for your environment before using them.
+
+## Technology
+
+Python, Streamlit, FastAPI, TensorFlow/Keras, scikit-learn, pandas, NumPy, Plotly, SQLite, FAISS, LangChain, Groq, and Docker.
